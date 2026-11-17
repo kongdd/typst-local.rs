@@ -25,7 +25,14 @@ fn run(path: &Path, args: &[&str]) -> Result<String> {
 pub fn clone(source: &str, destination: &Path) -> Result<()> {
     let path = Path::new(source);
     let source = if path.exists() {
-        path.canonicalize()?.to_string_lossy().into_owned()
+        // On Windows, canonicalize() adds a \\?\ prefix that Git for Windows
+        // may not recognize as a local repository path. An absolute path is enough.
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        absolute.to_string_lossy().into_owned()
     } else {
         source.to_owned()
     };
