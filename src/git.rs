@@ -59,15 +59,7 @@ fn repositories(path: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn versions(path: &Path) -> Result<Vec<semver::Version>> {
-    let mut versions = Vec::new();
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            if let Ok(version) = semver::Version::parse(&entry.file_name().to_string_lossy()) {
-                versions.push(version);
-            }
-        }
-    }
+    let mut versions = package::versions(path)?;
     if versions.is_empty() {
         let manifest = path.join("typst.toml");
         if manifest.is_file() {
@@ -75,7 +67,6 @@ fn versions(path: &Path) -> Result<Vec<semver::Version>> {
             versions.push(semver::Version::parse(&package.version)?);
         }
     }
-    versions.sort();
     Ok(versions)
 }
 
@@ -130,59 +121,59 @@ fn label(name: &str, package_path: &Path, repo: &Path) -> String {
     }
 }
 
-fn label_width(root: &Path, names: &[String]) -> Result<usize> {
-    let mut width = 0;
-    for name in names {
-        let path = root.join(name);
-        width = width.max(name.len());
-        for repo in repositories(&path)? {
-            width = width.max(label(name, &path, &repo).len());
-        }
-    }
-    Ok(width)
-}
+type UpdateResult = (String, Result<String>);
 
-pub fn update(root: &Path, name: &str) -> Result<()> {
-    package::validate(name, "0.0.0")?;
-    let path = root.join(name);
-    if !path.is_dir() {
-        bail!("package not found: {name}");
-    }
-    let width = label_width(root, &[name.to_owned()])?;
-    update_package(root, name, width)
-}
-
-fn update_package(root: &Path, name: &str, width: usize) -> Result<()> {
-    package::validate(name, "0.0.0")?;
+fn update_package(root: &Path, name: &str) -> Result<Vec<UpdateResult>> {
+    package::validate_name(name)?;
     let path = root.join(name);
     if !path.is_dir() {
         bail!("package not found: {name}");
     }
     let repos = repositories(&path)?;
     if repos.is_empty() {
-        println!("{name:width$}  skipped (not a Git repository)");
-        return Ok(());
+        return Ok(vec![(
+            name.to_owned(),
+            Ok("skipped (not a Git repository)".to_owned()),
+        )]);
     }
+    Ok(repos
+        .into_iter()
+        .map(|repo| {
+            let label = label(name, &path, &repo);
+            let version = repo
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            let expected = (repo != path).then_some((name, version));
+            (label, update_repository(&repo, expected))
+        })
+        .collect())
+}
+
+fn print_results(results: Vec<UpdateResult>) -> Result<()> {
+    let width = results
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0);
     let mut failed = false;
-    for repo in repos {
-        let label = label(name, &path, &repo);
-        let version = repo
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        let expected = (repo != path).then_some((name, version));
-        match update_repository(&repo, expected) {
-            Ok(summary) => println!("{label:width$}  {summary}"),
+    for (name, result) in results {
+        match result {
+            Ok(summary) => println!("{name:width$}  {summary}"),
             Err(error) => {
-                eprintln!("failed to update {}: {error:#}", repo.display());
+                eprintln!("{name:width$}  failed: {error:#}");
                 failed = true;
             }
         }
     }
     if failed {
-        bail!("one or more repositories failed to update");
+        bail!("one or more packages failed to update");
     }
     Ok(())
+}
+
+pub fn update(root: &Path, name: &str) -> Result<()> {
+    print_results(update_package(root, name)?)
 }
 
 pub fn update_all(root: &Path) -> Result<()> {
@@ -193,23 +184,19 @@ pub fn update_all(root: &Path) -> Result<()> {
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if entry.file_type()?.is_dir() && package::validate(&name, "0.0.0").is_ok() {
+        if entry.file_type()?.is_dir() && package::validate_name(&name).is_ok() {
             names.push(name);
         }
     }
     names.sort();
-    let width = label_width(root, &names)?;
-    let mut failed = false;
+    let mut results = Vec::new();
     for name in names {
-        if let Err(error) = update_package(root, &name, width) {
-            eprintln!("failed to update @local/{name}: {error:#}");
-            failed = true;
+        match update_package(root, &name) {
+            Ok(packages) => results.extend(packages),
+            Err(error) => results.push((name, Err(error))),
         }
     }
-    if failed {
-        bail!("one or more packages failed to update");
-    }
-    Ok(())
+    print_results(results)
 }
 
 #[cfg(test)]

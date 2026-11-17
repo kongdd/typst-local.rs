@@ -33,7 +33,7 @@ pub fn root() -> Result<PathBuf> {
     Ok(base.join("local"))
 }
 
-pub fn validate(name: &str, version: &str) -> Result<()> {
+pub fn validate_name(name: &str) -> Result<()> {
     if name.is_empty()
         || !name
             .bytes()
@@ -41,18 +41,37 @@ pub fn validate(name: &str, version: &str) -> Result<()> {
     {
         bail!("invalid package name: {name}");
     }
+    Ok(())
+}
+
+pub fn validate(name: &str, version: &str) -> Result<()> {
+    validate_name(name)?;
     semver::Version::parse(version).context("invalid package version")?;
     Ok(())
 }
 
 pub fn directory(root: &Path, name: &str) -> Result<PathBuf> {
-    validate(name, "0.0.0")?;
+    validate_name(name)?;
     let path = root.join(name);
     if !path.is_dir() {
         bail!("package directory not found: {}", path.display());
     }
     path.canonicalize()
         .context("cannot resolve package directory")
+}
+
+pub fn versions(path: &Path) -> Result<Vec<semver::Version>> {
+    let mut versions = Vec::new();
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            if let Ok(version) = semver::Version::parse(&entry.file_name().to_string_lossy()) {
+                versions.push(version);
+            }
+        }
+    }
+    versions.sort();
+    Ok(versions)
 }
 
 fn installed(root: &Path) -> Result<Vec<(String, Vec<semver::Version>)>> {
@@ -65,17 +84,8 @@ fn installed(root: &Path) -> Result<Vec<(String, Vec<semver::Version>)>> {
         if !entry.file_type()?.is_dir() {
             continue;
         }
-        let mut versions = Vec::new();
-        for version in fs::read_dir(entry.path())? {
-            let version = version?;
-            if version.file_type()?.is_dir() {
-                if let Ok(number) = semver::Version::parse(&version.file_name().to_string_lossy()) {
-                    versions.push(number);
-                }
-            }
-        }
+        let versions = versions(&entry.path())?;
         if !versions.is_empty() {
-            versions.sort();
             packages.push((entry.file_name().to_string_lossy().into_owned(), versions));
         }
     }
