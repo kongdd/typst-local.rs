@@ -1,6 +1,6 @@
 # typst-local
 
-管理 Typst 的本地包。需要安装 Rust、Cargo 和 Git。
+管理 Typst 的本地包。
 
 ## Installation
 
