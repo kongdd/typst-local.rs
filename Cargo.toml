@@ -1,0 +1,21 @@
+[package]
+name = "typst-local"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "typ"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+flate2 = "1"
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+tar = "0.4"
+tempfile = "3"
+toml = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
